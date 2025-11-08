@@ -45,7 +45,7 @@ if [ "$DISABLE_VIRTUAL_DESKTOP" = "true" ]; then
 else
     # Check if width and height are defined
     if [ -n "$DISPLAY_WIDTH" ] && [ -n "$DISPLAY_HEIGHT" ]; then
-    log_message "WINE: Enabling Virtual Desktop mode with $DISPLAY_WIDTH:$DISPLAY_WIDTH aspect ratio"
+    log_message "WINE: Enabling Virtual Desktop mode with $DISPLAY_WIDTH:$DISPLAY_HEIGHT aspect ratio"
     winetricks vd="$DISPLAY_WIDTH"x"$DISPLAY_HEIGHT"
     else
         # Default aspect ratio
