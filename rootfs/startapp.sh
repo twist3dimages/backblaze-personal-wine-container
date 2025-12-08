@@ -25,7 +25,9 @@ if [ ! -f "${WINEPREFIX}system.reg" ]; then
     echo "WINE: Wine not initialized, initializing"
     wineboot -i
     WINETRICKS_ACCEPT_EULA=1 winetricks -q -f dotnet48
-    log_message "WINE: Initialization done"
+    # Set Windows version to Windows 10
+    WINETRICKS_ACCEPT_EULA=1 winetricks -q win10
+    log_message "WINE: Initialization done and set to Windows 10"
 fi
 
 #Configure Extra Mounts
