@@ -2,6 +2,10 @@ name: Docker Build and Push
 
 concurrency: docker-publish
 
+permissions:
+  contents: read
+  packages: write
+
 on:
   schedule:
     - cron: '23 4 */7 * *'
@@ -16,26 +20,26 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY: docker.io
-  IMAGE_NAME: ${{ secrets.DOCKERHUB_USER }}/backblaze-personal-wine
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/backblaze-personal-wine-container
 
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        dockerfile: [ubuntu22, ubuntu20, ubuntu18]
+        dockerfile: [ubuntu24, ubuntu22]
         include:
-          - dockerfile: ubuntu22
+          - dockerfile: ubuntu24
             tags: |
               main
               latest
+              ubuntu24
+              ${{ github.ref_name }}
+          - dockerfile: ubuntu22
+            tags: |
               ubuntu22
               ${{ github.ref_name }}
-          - dockerfile: ubuntu20
-            tags: ubuntu20
-          - dockerfile: ubuntu18
-            tags: ubuntu18
 
     steps:
       - name: Checkout repository
@@ -47,15 +51,15 @@ jobs:
       - name: Setup Docker buildx
         uses: docker/setup-buildx-action@v3
 
-      # Login against a Docker registry except on PR
+      # Login against GitHub Container Registry except on PR
       # https://github.com/docker/login-action
       - name: Log into registry ${{ env.REGISTRY }}
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.DOCKERHUB_USER }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       # Extract metadata (tags, labels) for Docker
       # https://github.com/docker/metadata-action
