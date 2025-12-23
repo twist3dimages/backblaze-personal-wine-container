@@ -12,7 +12,10 @@ pinned_bz_version_file="/PINNED_BZ_VERSION"
 pinned_bz_version=$(sed -n '1p' "$pinned_bz_version_file")
 pinned_bz_version_url=$(sed -n '2p' "$pinned_bz_version_file")
 
-export FORCE_LATEST_UPDATE="true" #disable pinned version since URL is excluded from archive.org
+# Only set FORCE_LATEST_UPDATE if not already set by user
+if [ -z "$FORCE_LATEST_UPDATE" ]; then
+    export FORCE_LATEST_UPDATE="true" #default to true since URL is excluded from archive.org
+fi
 export WINEARCH="win64"
 export WINEDLLOVERRIDES="mscoree=" # Disable Mono installation
 
@@ -56,16 +59,25 @@ else
     fi
 fi
 
-# Disclaimer
-    # Check if auto-updates are disabled
+# Disclaimer and bzupdates folder protection
+bzupdates_folder="${WINEPREFIX}drive_c/Program Files (x86)/Backblaze/bzupdates"
 if [ "$DISABLE_AUTOUPDATE" = "true" ]; then
     echo "Auto-updates are disabled. Backblaze won't be updated."
+    # Make bzupdates folder read-only to prevent Backblaze from auto-updating itself
+    if [ -d "$bzupdates_folder" ]; then
+        log_message "UPDATER: Making bzupdates folder read-only to prevent Backblaze auto-updates"
+        chmod -R 555 "$bzupdates_folder" 2>/dev/null || log_message "UPDATER: Warning - Could not set bzupdates folder to read-only"
+    fi
 else
     # Check the status of FORCE_LATEST_UPDATE
     if [ "$FORCE_LATEST_UPDATE" = "true" ]; then
         echo "FORCE_LATEST_UPDATE is enabled which may brick your installation."
     else
         echo "FORCE_LATEST_UPDATE is disabled. Using known-good version of Backblaze."
+    fi
+    # Ensure bzupdates folder is writable when auto-updates are enabled
+    if [ -d "$bzupdates_folder" ]; then
+        chmod -R 755 "$bzupdates_folder" 2>/dev/null || true
     fi
 fi
 
@@ -90,7 +102,20 @@ fetch_and_install() {
 }
 
 start_app() {
-    log_message "STARTAPP: Starting Backblaze version $(cat "$local_version_file")"
+    if [ -f "$local_version_file" ]; then
+        local_version=$(cat "$local_version_file" 2>/dev/null || echo "unknown")
+        log_message "STARTAPP: Starting Backblaze version $local_version"
+    else
+        log_message "STARTAPP: Starting Backblaze (version file not found)"
+    fi
+    
+    if [ ! -f "${WINEPREFIX}drive_c/Program Files (x86)/Backblaze/bzbui.exe" ]; then
+        log_message "STARTAPP: ERROR - bzbui.exe not found. Application may not be installed."
+        echo "Error: bzbui.exe not found. Application may not be installed." >> "$log_file"
+        return 1
+    fi
+    
+    log_message "STARTAPP: Launching bzbui.exe"
     wine64 "${WINEPREFIX}drive_c/Program Files (x86)/Backblaze/bzbui.exe" -noquiet &
     sleep infinity
 }
@@ -126,6 +151,7 @@ if [ -f "${WINEPREFIX}drive_c/Program Files (x86)/Backblaze/bzbui.exe" ]; then
     if [ "$DISABLE_AUTOUPDATE" = "true" ]; then
         log_message "UPDATER: DISABLE_AUTOUPDATE=true, Auto-updates are disabled. Starting Backblaze without updating."
         start_app
+        exit 0
     fi
 
     # Update process for force_latest_update set to true or not set
@@ -185,6 +211,9 @@ if [ -f "${WINEPREFIX}drive_c/Program Files (x86)/Backblaze/bzbui.exe" ]; then
         fi
     fi
 else # Client currently not installed
+    if [ "$DISABLE_AUTOUPDATE" = "true" ]; then
+        log_message "INSTALLER: DISABLE_AUTOUPDATE=true but app not installed. Performing initial installation."
+    fi
     fetch_and_install &&
     start_app
 fi
