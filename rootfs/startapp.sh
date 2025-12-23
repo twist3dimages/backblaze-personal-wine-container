@@ -116,6 +116,9 @@ start_app() {
     fi
     
     log_message "STARTAPP: Launching bzbui.exe"
+    # Configure Wine to center dialogs and ensure they're visible
+    wine64 reg add "HKEY_CURRENT_USER\\Software\\Wine\\X11 Driver" /v UseTakeFocus /t REG_SZ /d "N" /f >/dev/null 2>&1 || true
+    wine64 reg add "HKEY_CURRENT_USER\\Software\\Wine\\X11 Driver" /v Managed /t REG_SZ /d "Y" /f >/dev/null 2>&1 || true
     wine64 "${WINEPREFIX}drive_c/Program Files (x86)/Backblaze/bzbui.exe" -noquiet &
     sleep infinity
 }
