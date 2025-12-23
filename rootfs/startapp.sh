@@ -55,7 +55,7 @@ else
     else
         # Default aspect ratio
         log_message "WINE: Enabling Virtual Desktop mode with recommended aspect ratio"
-        winetricks vd="900x700"
+        winetricks vd="1280x1024"
     fi
 fi
 
