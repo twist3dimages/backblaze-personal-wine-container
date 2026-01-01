@@ -27,9 +27,24 @@ log_message() {
 if [ ! -f "${WINEPREFIX}system.reg" ]; then
     echo "WINE: Wine not initialized, initializing"
     wineboot -i
-    WINETRICKS_ACCEPT_EULA=1 winetricks -q -f dotnet48
+    
+    # Try to install .NET Framework 4.8, but don't fail if it doesn't work
+    echo "WINE: Installing .NET Framework 4.8 (this may take 10-15 minutes)..."
+    if ! WINETRICKS_ACCEPT_EULA=1 winetricks -q -f dotnet48 2>&1 | tee -a "$log_file"; then
+        echo "WINE: Warning - .NET Framework 4.8 installation had issues, but continuing..."
+        log_message "WINE: .NET Framework 4.8 installation had issues, but continuing..."
+    fi
+    
     # Set Windows version to Windows 10
     WINETRICKS_ACCEPT_EULA=1 winetricks -q win10
+    
+    # Verify Wine is working
+    if ! wine64 --version > /dev/null 2>&1; then
+        echo "WINE: ERROR - Wine is not functioning properly!"
+        log_message "WINE: ERROR - Wine is not functioning properly!"
+        sleep infinity
+    fi
+    
     log_message "WINE: Initialization done and set to Windows 10"
 fi
 
@@ -84,41 +99,100 @@ fi
 # Function to handle errors
 handle_error() {
     echo "Error: $1" >> "$log_file"
-    start_app # Start app even if there is a problem with the updater
+    log_message "ERROR: $1"
+    echo "ERROR: $1"
+    # Don't automatically start app on error - let caller decide
+    return 1
 }
 
 fetch_and_install() {
-    cd "$install_exe_path" || handle_error "INSTALLER: can't navigate to $install_exe_path"
+    if ! cd "$install_exe_path"; then
+        log_message "INSTALLER: ERROR - Cannot navigate to $install_exe_path"
+        return 1
+    fi
+    
+    # Download the installer
     if [ "$FORCE_LATEST_UPDATE" = "true" ]; then
-        log_message "INSTALLER: FORCE_LATEST_UPDATE=true - downloading latest version"
-        curl -L "https://www.backblaze.com/win32/install_backblaze.exe" --output "install_backblaze.exe"
+        log_message "INSTALLER: FORCE_LATEST_UPDATE=true - downloading latest version from Backblaze"
+        echo "Downloading latest Backblaze version..."
+        if ! curl -L "https://www.backblaze.com/win32/install_backblaze.exe" --output "install_backblaze.exe" 2>&1 | tee -a "$log_file"; then
+            log_message "INSTALLER: Failed to download latest version from Backblaze"
+            return 1
+        fi
     else
         log_message "INSTALLER: FORCE_LATEST_UPDATE=false - downloading pinned version $pinned_bz_version from archive.org"
-        curl -A "$custom_user_agent" -L "$pinned_bz_version_url" --output "install_backblaze.exe" || handle_error "INSTALLER: error downloading from $pinned_bz_version_url"
+        echo "Downloading pinned Backblaze version $pinned_bz_version..."
+        if ! curl -A "$custom_user_agent" -L "$pinned_bz_version_url" --output "install_backblaze.exe" 2>&1 | tee -a "$log_file"; then
+            log_message "INSTALLER: Failed to download from $pinned_bz_version_url"
+            return 1
+        fi
     fi
-    log_message "INSTALLER: Starting install_backblaze.exe"
-    WINEARCH="$WINEARCH" WINEPREFIX="$WINEPREFIX" wine64 "install_backblaze.exe" || handle_error "INSTALLER: Failed to install Backblaze"
-
+    
+    # Verify download
+    if [ ! -f "install_backblaze.exe" ] || [ ! -s "install_backblaze.exe" ]; then
+        log_message "INSTALLER: Downloaded file is missing or empty"
+        return 1
+    fi
+    
+    log_message "INSTALLER: Download complete, starting installation (this may take several minutes)..."
+    echo "Installing Backblaze (this will take 5-10 minutes)..."
+    
+    # Run the installer with better error handling
+    if WINEARCH="$WINEARCH" WINEPREFIX="$WINEPREFIX" wine64 "install_backblaze.exe" 2>&1 | tee -a "$log_file"; then
+        log_message "INSTALLER: Installer process completed"
+        return 0
+    else
+        log_message "INSTALLER: Installer process failed"
+        return 1
+    fi
 }
 
 start_app() {
     if [ -f "$local_version_file" ]; then
         local_version=$(cat "$local_version_file" 2>/dev/null || echo "unknown")
         log_message "STARTAPP: Starting Backblaze version $local_version"
+        echo "Starting Backblaze version $local_version"
     else
         log_message "STARTAPP: Starting Backblaze (version file not found)"
+        echo "Starting Backblaze (version file not found)"
     fi
     
     if [ ! -f "${WINEPREFIX}drive_c/Program Files (x86)/Backblaze/bzbui.exe" ]; then
         log_message "STARTAPP: ERROR - bzbui.exe not found. Application may not be installed."
-        echo "Error: bzbui.exe not found. Application may not be installed." >> "$log_file"
+        echo "===================================================================="
+        echo "ERROR: Backblaze is not installed!"
+        echo ""
+        echo "This usually means the installation failed."
+        echo "Check the log file at: $log_file"
+        echo ""
+        echo "Common causes:"
+        echo "  - Wine failed to initialize (check Wine installation)"
+        echo "  - .NET Framework 4.8 failed to install"
+        echo "  - Backblaze installer download failed"
+        echo "  - Backblaze installer incompatible with Wine version"
+        echo ""
+        echo "Container will sleep indefinitely. Check logs with: docker logs <container>"
+        echo "===================================================================="
+        sleep infinity
         return 1
     fi
     
     log_message "STARTAPP: Launching bzbui.exe"
+    echo "Launching Backblaze UI..."
+    
     # Wait a moment for Wine to be ready
     sleep 2
-    wine64 "${WINEPREFIX}drive_c/Program Files (x86)/Backblaze/bzbui.exe" -noquiet &
+    
+    # Launch Backblaze in background and capture any errors
+    if wine64 "${WINEPREFIX}drive_c/Program Files (x86)/Backblaze/bzbui.exe" -noquiet 2>&1 | tee -a "$log_file" &
+    then
+        log_message "STARTAPP: Backblaze UI launched successfully"
+        echo "Backblaze is now running. Access the web interface at http://localhost:5800"
+    else
+        log_message "STARTAPP: ERROR - Failed to launch Backblaze UI"
+        echo "ERROR: Failed to launch Backblaze. Check logs at: $log_file"
+    fi
+    
     # Give the app time to start and display
     sleep 3
     log_message "STARTAPP: Backblaze should now be running"
@@ -175,25 +249,47 @@ if [ -f "${WINEPREFIX}drive_c/Program Files (x86)/Backblaze/bzbui.exe" ]; then
 
             for url in $urls; do
                 if check_url_validity "$url"; then
-                    xml_content=$(curl -s "$url") || handle_error "UPDATER: Failed to fetch XML content"
+                    if ! xml_content=$(curl -s "$url"); then
+                        log_message "UPDATER: Failed to fetch XML from $url, trying next URL"
+                        continue
+                    fi
                     xml_version=$(echo "$xml_content" | grep -o '<update win32_version="[0-9.]*"' | cut -d'"' -f2)
-                    local_version=$(cat "$local_version_file") || handle_error "UPDATER: Failed to read local version from $local_version_file"
+                    if ! local_version=$(cat "$local_version_file" 2>/dev/null); then
+                        log_message "UPDATER: Failed to read local version file, starting app"
+                        start_app
+                        exit 0
+                    fi
                     log_message "UPDATER: Installed Version=$local_version"
                     log_message "UPDATER: Latest Version=$xml_version"
                     if compare_versions "$local_version" "$xml_version"; then
                         log_message "UPDATER: Newer version found - downloading and installing the newer version..."
-                        fetch_and_install
-                        start_app # Exit after successful download+installation and start app
+                        if fetch_and_install; then
+                            log_message "UPDATER: Update completed successfully"
+                            start_app
+                        else
+                            log_message "UPDATER: Update failed, but starting app anyway with current version"
+                            start_app
+                        fi
                     else
                         log_message "UPDATER: The installed version is up to date."
                         start_app # Exit autoupdate and start app
                     fi
+                    exit 0  # Exit after handling this version check
                 fi
             done
 
-            handle_error "No valid XML content found or all URLs are unavailable."
+            # If we got here, no valid URL was found
+            log_message "UPDATER: ERROR - No valid XML content found or all URLs are unavailable."
+            echo "ERROR: Cannot check for updates - Backblaze API unavailable"
+            log_message "UPDATER: Starting app with current version"
+            start_app
+            exit 0
         else
-            handle_error "Local version file not found. Exiting."
+            log_message "UPDATER: ERROR - Local version file not found but app is installed"
+            echo "ERROR: Version file missing but Backblaze appears to be installed"
+            log_message "UPDATER: Starting app anyway"
+            start_app
+            exit 0
         fi
     else
         # Update process for force_latest_update set to false or anything else
@@ -204,21 +300,67 @@ if [ -f "${WINEPREFIX}drive_c/Program Files (x86)/Backblaze/bzbui.exe" ]; then
             log_message "UPDATER: Pinned Version=$pinned_bz_version"
 
             if compare_versions "$local_version" "$pinned_bz_version"; then
-                log_message "UPDATER: Newer version found - downloading and installing the newer version..."
-                fetch_and_install
-                start_app # Exit after successful download+installation and start app
+                log_message "UPDATER: Pinned version ($pinned_bz_version) is newer than installed ($local_version)"
+                log_message "UPDATER: Downloading and installing pinned version..."
+                if fetch_and_install; then
+                    # Check if version was actually updated
+                    if [ -f "$local_version_file" ]; then
+                        new_version=$(cat "$local_version_file" 2>/dev/null || echo "$local_version")
+                        if [ "$new_version" != "$local_version" ]; then
+                            log_message "UPDATER: Successfully updated from $local_version to $new_version"
+                        else
+                            log_message "UPDATER: Warning - Version file not updated after install. Install may have failed."
+                        fi
+                    fi
+                    start_app
+                else
+                    log_message "UPDATER: Update failed, starting app with current version $local_version"
+                    start_app
+                fi
             else
-                log_message "UPDATER: Installed version is up to date. There may be a newer version available when using FORCE_LATEST_UPDATE=true"
-                start_app # Exit autoupdate and start app
+                log_message "UPDATER: Installed version ($local_version) is up to date with pinned version ($pinned_bz_version)"
+                start_app
             fi
+            exit 0  # Exit after version check
         else
             handle_error "UPDATER: Local version file does not exist. Exiting updater."
         fi
     fi
 else # Client currently not installed
+    log_message "INSTALLER: Backblaze not installed, performing initial installation..."
     if [ "$DISABLE_AUTOUPDATE" = "true" ]; then
-        log_message "INSTALLER: DISABLE_AUTOUPDATE=true but app not installed. Performing initial installation."
+        log_message "INSTALLER: Note - DISABLE_AUTOUPDATE=true, but initial installation is required"
     fi
-    fetch_and_install &&
-    start_app
+    
+    if fetch_and_install; then
+        log_message "INSTALLER: Initial installation completed"
+        # Verify installation
+        if [ -f "${WINEPREFIX}drive_c/Program Files (x86)/Backblaze/bzbui.exe" ]; then
+            log_message "INSTALLER: Backblaze executable found, installation successful"
+            start_app
+        else
+            log_message "INSTALLER: ERROR - Backblaze executable not found after installation"
+            echo "===================================================================="
+            echo "INSTALLATION FAILED!"
+            echo ""
+            echo "The Backblaze installer ran but did not install the application."
+            echo "This usually means:"
+            echo "  - Wine is not properly configured"
+            echo "  - The Backblaze installer is incompatible with this Wine version"
+            echo "  - .NET Framework installation failed"
+            echo ""
+            echo "Check logs at: $log_file"
+            echo "===================================================================="
+            sleep infinity
+        fi
+    else
+        log_message "INSTALLER: Initial installation failed"
+        echo "===================================================================="
+        echo "INSTALLATION FAILED!"
+        echo ""
+        echo "Could not download or run the Backblaze installer."
+        echo "Check logs at: $log_file"
+        echo "===================================================================="
+        sleep infinity
+    fi
 fi
